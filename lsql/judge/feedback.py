@@ -42,12 +42,14 @@ def header_to_str(header):
     return "(" + str_header + ")"
 
 
-def feedback_headers(expected, obtained):
+def feedback_headers(expected, obtained, initial_db=None):
     """
     :param expected: expected result ({'header': list, 'rows': list})
     :param obtained: obtained result ({'header': list, 'rows': list})
+    :param initial_db: List containing all tables
     :return: (str) HTML code with the feedback, or '' if the headers are equal
     """
+
     if expected['header'] == obtained['header']:
         return ''
 
@@ -60,7 +62,8 @@ def feedback_headers(expected, obtained):
                                  'comment': comment,
                                  'expected_rows': header_to_str(expected['header']),
                                  'obtained_rows': header_to_str(obtained['header']),
-                                 'obtained': _obtained}
+                                 'obtained': _obtained,
+                                 'initial_db': initial_db}
                                 )
 
     longitud = len(expected['header'])
@@ -77,7 +80,8 @@ def feedback_headers(expected, obtained):
             return render_to_string('feedback_wa_headers.html',
                                     {'expected': expected_r,
                                      'comment': comment,
-                                     'obtained': obtained_r}
+                                     'obtained': obtained_r,
+                                     'initial_db': initial_db}
                                     )
         if name_expected.upper() == name_obtained.upper() and \
                 oracle_type_expected.upper() != oracle_type_obtained.upper():
@@ -87,17 +91,19 @@ def feedback_headers(expected, obtained):
             return render_to_string('feedback_wa_headers.html',
                                     {'expected': expected_r2,
                                      'comment': comment2,
-                                     'obtained': obtained_r2}
+                                     'obtained': obtained_r2,
+                                     'initial_db': initial_db}
                                     )
         i = i + 1
     return ''
 
 
-def feedback_rows(expected, obtained, order):
+def feedback_rows(expected, obtained, order, initial_db=None):
     """
     :param expected: expected result ({'header': list, 'rows': list})
     :param obtained: obtained result ({'header': list, 'rows': list})
     :param order: consider order when comparing rows
+    :param initial_db: List containing all tables
     :return: (str) HTML code with the feedback, or '' if the table rows are equal (considering order)
     """
     tupled_expected = [tuple(r) for r in expected['rows']]
@@ -118,7 +124,8 @@ def feedback_rows(expected, obtained, order):
         feedback = render_to_string('feedback_wa_wrong_rows.html',
                                     {'table': {'header': expected['header'], 'rows': tupled_obtained},
                                      'name': None,
-                                     'mark_rows': incorrect_row_numbers}
+                                     'mark_rows': incorrect_row_numbers,
+                                     'initial_db': initial_db}
                                     )
         return feedback
 
@@ -127,7 +134,8 @@ def feedback_rows(expected, obtained, order):
         feedback = render_to_string('feedback_wa_missing_rows.html',
                                     {'obtained': obtained,
                                      'missing': {'header': expected['header'], 'rows': expected_not_obtained},
-                                     'mark_missing': set(list(range(len(expected_not_obtained))))}
+                                     'mark_missing': set(list(range(len(expected_not_obtained)))),
+                                     'initial_db': initial_db}
                                     )
         return feedback
 
@@ -137,19 +145,52 @@ def feedback_rows(expected, obtained, order):
     return ''  # Everything OK => Accepted
 
 
-def compare_select_results(expected, obtained, order):
+def compare_select_results(expected, obtained, order, initial_db=None):
     """
     :param expected: {'header': list, 'rows': list}, expected SELECT result (teacher).
     :param obtained: {'header': list, 'rows': list}, obtained SELECT result (student)
     :param order: Consider order when comparing rows
+    :param initial_db: List containing all tables
     :return: (veredict, feedback), where veredict is VeredictCode.AC or VeredictCode.WA and
              error is a str with feedback to the student
     """
-    feedback = feedback_headers(expected, obtained)
+    parsed_initial_db = None
+    if initial_db is not None:
+        parsed_initial_db = []
+        for table_name in initial_db:
+            tupled_obtained = [tuple(r) for r in initial_db[table_name]['rows']]
+            parsed_initial_db.append({'header': initial_db[table_name]['header'], 'rows': tupled_obtained})
+    feedback = feedback_headers(expected, obtained, parsed_initial_db)
     if not feedback:
-        feedback = feedback_rows(expected, obtained, order)
+        feedback = feedback_rows(expected, obtained, order, parsed_initial_db)
     veredict = VeredictCode.WA if feedback else VeredictCode.AC
     return veredict, feedback
+
+
+def compare_discriminant_db(correct, incorrect, order):
+    """Compare the two db from discriminant type problem"""
+    feedback = feedback_headers(correct, incorrect, None)
+    if not feedback:
+        feedback = feedback_rows_discriminant(correct, incorrect, order)
+    veredict = VeredictCode.WA if feedback else VeredictCode.AC
+    return veredict, feedback
+
+
+def feedback_rows_discriminant(correct, incorrect, order):
+    """
+    :param correct: expected result ({'header': list, 'rows': list})
+    :param incorrect: obtained result ({'header': list, 'rows': list})
+    :param order: consider order when comparing rows
+    :return: (str) HTML code with the feedback, or '' if the table rows are not equal (considering order)
+    """
+    tupled_correct = [tuple(r) for r in correct['rows']]
+    tupled_incorrect = [tuple(r) for r in incorrect['rows']]
+    mset_correct = Multiset(tupled_correct)
+    mset_incorrect = Multiset(tupled_incorrect)
+    obtained_not_expected = mset_correct - mset_incorrect
+    if (order and correct != incorrect) or obtained_not_expected:
+        return ''
+    return render_to_string('feedback_table_result.html', {'obtained': incorrect})
 
 
 def compare_db_results(expected_db, obtained_db):
@@ -204,3 +245,21 @@ def compile_error_to_html_table(tab):
     """
     feedback = render_to_string('feedback_ce.html', {'table': tab})
     return feedback
+
+
+def filter_expected_db(expected_db, initial_db):
+    """Compare expected_db and initial_db and return all the modified, removed or added tables"""
+    expected_tables = sorted(list(expected_db.keys()))
+    initial_tables = sorted(list(initial_db.keys()))
+    ret_added = {}
+    ret_modified = {}
+    ret_removed = {}
+    common_tables = initial_db.keys() & expected_db.keys()
+    if expected_tables != initial_tables:
+        ret_added = {x: expected_db[x] for x in expected_tables if x not in initial_tables}
+        ret_removed = {x: initial_db[x] for x in initial_tables if x not in expected_tables}
+    for table in common_tables:
+        veredict, _ = compare_select_results(expected_db[table], initial_db[table], order=False)
+        if veredict != VeredictCode.AC:
+            ret_modified[table] = expected_db[table]
+    return ret_added, ret_modified, ret_removed

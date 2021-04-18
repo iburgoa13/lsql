@@ -3,6 +3,13 @@
 Copyright Enrique Martín <emartinm@ucm.es> 2020
 Functions that process HTTP connections
 """
+from datetime import timedelta, datetime
+
+import tempfile
+import os
+import pathlib
+from bs4 import BeautifulSoup
+import openpyxl
 
 from django.http import HttpResponseRedirect, JsonResponse, HttpResponseForbidden
 from django.http.response import HttpResponse, HttpResponseNotFound
@@ -12,41 +19,41 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.contrib.auth.decorators import login_required
 from logzero import logger
+
 from .exceptions import ExecutorException
-from .feedback import compile_error_to_html_table
-from .forms import SubmitForm
-from .models import Collection, Problem, SelectProblem, DMLProblem, ProcProblem, FunctionProblem, TriggerProblem, \
-    Submission
+from .feedback import compile_error_to_html_table, filter_expected_db
+from .forms import SubmitForm, ResultForm
+from .models import Collection, Problem, Submission, ObtainedAchievement, AchievementDefinition
 from .oracle_driver import OracleExecutor
 from .types import VeredictCode, OracleStatusCode, ProblemType
 
 
-def get_child_problem(problem_id):
+####################
+# Helper functions #
+####################
+
+def get_subclass_problem(problem_id):
     """Look for problem 'pk' in the different child classes of Problem"""
-    classes = [SelectProblem, DMLProblem, FunctionProblem, ProcProblem, TriggerProblem]
-    i = 0
-    problem = None
-    while i < len(classes) and problem is None:
-        problems = classes[i].objects.filter(pk=problem_id)
-        i += 1
-        if problems:
-            problem = problems[0]
-    return problem
+    queryset = Problem.objects.filter(pk=problem_id).select_subclasses()
+    return None if len(queryset) == 0 else queryset[0]
 
 
 def pos(user_1, user_2):
-    """compare if user_1 has a better ranking than user_2"""
+    """ Compares if user_1 has a better ranking than user_2 """
     if user_1.resolved == user_2.resolved and user_1.score == user_2.score:
         return False
     return True
 
 
-def index(_):
-    """Redirect root access to collections"""
-    return HttpResponseRedirect(reverse('judge:collections'))
+def first_day_of_course(init_course):
+    """Returns the first day of the academic year"""
+    first_day = datetime(init_course.year, 9, 1).strftime('%Y-%m-%d')
+    if 1 <= init_course.month < 9:
+        first_day = datetime(init_course.year - 1, 9, 1).strftime('%Y-%m-%d')
+    return first_day
 
 
-def update_user_with_scores(user, collection):
+def update_user_with_scores(user_logged, user, collection, start, end):
     """Updates user object with information about submissions to problems in collection:
        - user.score (int)
        - user.collection (list of str representing "accepted submissions/all submission (first AC)") for problems in
@@ -58,7 +65,13 @@ def update_user_with_scores(user, collection):
         attempts = 0
         problem = collection.problem_list[numb]
         user.first_AC = 0
-        subs = Submission.objects.filter(user=user).filter(problem=problem.id).order_by('pk')
+        if user_logged.is_staff:
+            subs = Submission.objects.filter(user=user,
+                                             problem=problem.id,
+                                             creation_date__range=[start, end + timedelta(days=1)]).order_by('pk')
+
+        else:
+            subs = Submission.objects.filter(user=user).filter(problem=problem.id).order_by('pk')
         for (submission_pos, submission) in enumerate(subs):
             if submission.veredict_code == VeredictCode.AC:
                 num_accepted = num_accepted + 1
@@ -67,19 +80,35 @@ def update_user_with_scores(user, collection):
                 user.first_AC = submission_pos + 1
                 user.score = user.score + submission_pos + 1
             attempts = attempts + 1
-        update_user_attempts_problem(attempts, user, problem, num_accepted, collection, numb)
+        update_user_attempts_problem(attempts, user, problem, num_accepted, collection, numb, enter)
 
 
-def update_user_attempts_problem(attempts, user, problem, num_accepted, collection, numb):
+def update_user_attempts_problem(attempts, user, problem, num_accepted, collection, numb, enter):
     """Updates user.collection list with problem information:  "accepted submissions/all submission (first AC)"""
     if attempts > 0 and user.first_AC == 0:
         problem.num_submissions = f"{num_accepted}/{attempts} ({attempts})"
+        problem.solved = False
     else:
         problem.num_submissions = f"{num_accepted}/{attempts} ({user.first_AC})"
-    problem.solved = collection.problem_list[numb].solved_by_user(user)
-    if problem.solved:
+        problem.solved = collection.problem_list[numb].solved_by_user(user)
+    if problem.solved and enter:
         user.resolved = user.resolved + 1
     user.collection.append(problem)
+
+
+def check_if_get_achievement(user):
+    """Check if the user get some achievement"""
+    for ach in AchievementDefinition.objects.all().select_subclasses():
+        ach.check_and_save(user)
+
+
+##############
+#   Views    #
+##############
+
+def index(_):
+    """Redirect root access to collections"""
+    return HttpResponseRedirect(reverse('judge:collections'))
 
 
 @login_required
@@ -90,51 +119,69 @@ def show_result(request, collection_id):
         return render(request, 'generic_error_message.html',
                       {'error': ['¡Lo sentimos! No existe ningún grupo para ver resultados']})
     position = 1
-    try:
+    result_form = ResultForm(request.GET)
+    start = None
+    end = None
+    up_to_classification_date = None
+    from_classification_date = None
+    up_to_classification = datetime.today().strftime('%Y-%m-%d')
+    collection = get_object_or_404(Collection, pk=collection_id)
+    if request.user.is_staff and result_form.is_valid():
+        group_id = result_form.cleaned_data['group']
+        start = result_form.cleaned_data['start']
+        end = result_form.cleaned_data['end']
+        groups_user = Group.objects.all().order_by('name')
+        up_to_classification_date = end
+        from_classification_date = start
+    elif request.user.is_staff and not result_form.is_valid():
+        # Error 404 with all the validation errors as HTML
+        return HttpResponseNotFound(str(result_form.errors))
+    else:
+        if result_form.is_valid():
+            return HttpResponseForbidden("Forbidden")
+        groups_user = request.user.groups.all().order_by('name')
         group_id = request.GET.get('group')
-        collection = get_object_or_404(Collection, pk=collection_id)
-        if request.user.is_staff:
-            groups_user = Group.objects.all().order_by('name')
-        else:
-            groups_user = request.user.groups.all().order_by('name')
-        if group_id is None:
-            group_id = groups_user[0].id
-        group0 = get_object_or_404(Group, pk=group_id)
-        users = get_user_model().objects.filter(groups__name=group0.name)
-        if users.filter(id=request.user.id) or request.user.is_staff:
-            group0.name = group0.name
-            group0.id = group_id
-            groups_user = groups_user.exclude(id=group_id)
-            collection.problem_list = collection.problems()
-            collection.total_problem = collection.problem_list.count()
-            users = users.exclude(is_staff=True)
-            for user in users:
-                user.collection = []
-                user.resolved = 0
-                user.score = 0
-                update_user_with_scores(user, collection)
-            users = sorted(users, key=lambda x: (x.resolved, -x.score), reverse=True)
-            length = len(users)
-            for i in range(length):
-                if i != len(users) - 1:
-                    if pos(users[i], users[i + 1]):
-                        users[i].pos = position
-                        position = position + 1
-                    else:
-                        users[i].pos = position
+    if group_id is None:
+        group_id = groups_user[0].id
+    group0 = get_object_or_404(Group, pk=group_id)
+    users = get_user_model().objects.filter(groups__name=group0.name)
+    if users.filter(id=request.user.id) or request.user.is_staff:
+        group0.name = group0.name
+        group0.id = group_id
+        groups_user = groups_user.exclude(id=group_id)
+        collection.problem_list = collection.problems()
+        collection.total_problem = collection.problem_list.count()
+        users = users.exclude(is_staff=True)
+        for user in users:
+            user.collection = []
+            user.resolved = 0
+            user.score = 0
+            user.n_achievements = ObtainedAchievement.objects.filter(user=user.pk).count()
+            update_user_with_scores(request.user, user, collection, start, end)
+        users = sorted(users, key=lambda x: (x.resolved, -x.score), reverse=True)
+        length = len(users)
+        for i in range(length):
+            if i != len(users) - 1:
+                if pos(users[i], users[i + 1]):
+                    users[i].pos = position
+                    position = position + 1
                 else:
-                    if pos(users[i], users[i - 1]):
-                        users[i].pos = position
-                        position = position + 1
-                    else:
-                        users[i].pos = position
+                    users[i].pos = position
+            else:
+                if pos(users[i], users[i - 1]):
+                    users[i].pos = position
+                    position = position + 1
+                else:
+                    users[i].pos = position
+        return render(request, 'results.html', {'collection': collection, 'groups': groups_user,
+                                                'users': users, 'login': request.user,
+                                                'group0': group0,
+                                                'to_fixed': up_to_classification,
+                                                'from_date': from_classification_date,
+                                                'to_date': up_to_classification_date,
+                                                'end_date': end, 'start_date': start})
 
-            return render(request, 'results.html', {'collection': collection, 'groups': groups_user, 'users': users,
-                                                    'login': request.user, 'group0': group0})
-
-        return HttpResponseForbidden("Forbidden")
-    except ValueError:
-        return HttpResponseNotFound("El identificador de grupo no tiene el formato correcto")
+    return HttpResponseForbidden("Forbidden")
 
 
 @login_required
@@ -158,7 +205,17 @@ def show_results(request):
         # Templates can only invoke nullary functions or access object attribute, so we store
         # the number of problems solved by the user in an attribute
         results.num_solved = results.num_solved_by_user(request.user)
-    return render(request, 'result.html', {'results': cols, 'group': groups_user[0].id})
+    up_to_classification = datetime.today().strftime('%Y-%m-%d')
+    up_to_classification_date = datetime.strptime(up_to_classification, '%Y-%m-%d')
+
+    from_classification = first_day_of_course(datetime.today())
+    from_classification_date = datetime.strptime(from_classification, '%Y-%m-%d')
+    return render(request, 'result.html', {'user': request.user, 'results': cols, 'group': groups_user[0].id,
+                                           'start_date': from_classification,
+                                           'from_date': from_classification_date,
+                                           'to_date': up_to_classification_date,
+                                           'to_fixed': up_to_classification,
+                                           'end_date': up_to_classification})
 
 
 @login_required
@@ -190,9 +247,12 @@ def show_problem(request, problem_id):
     # Error 404 if there is no a Problem pk
     get_object_or_404(Problem, pk=problem_id)
     # Look for problem pk in all the Problem classes
-    problem = get_child_problem(problem_id)
+    problem = get_subclass_problem(problem_id)
     # Stores the flag in an attribute so that the template can use it
     problem.solved = problem.solved_by_user(request.user)
+    # Filter the expected result to display it
+    problem.show_added, problem.show_modified, problem.show_removed = filter_expected_db(problem.expected_result[0],
+                                                                                         problem.initial_db[0])
     return render(request, problem.template(), {'problem': problem})
 
 
@@ -205,12 +265,21 @@ def show_submissions(request):
         id_user = request.GET.get('user_id')
         if pk_problem is not None or id_user is not None:
             if int(id_user) == request.user.id and not request.user.is_staff:
+                start = request.GET.get('start')
+                end = request.GET.get('end')
+                if start is not None or end is not None:
+                    return HttpResponseForbidden("Forbidden")
                 problem = get_object_or_404(Problem, pk=pk_problem)
                 subs = Submission.objects.filter(user=request.user).filter(problem=problem.id).order_by('-pk')
             elif request.user.is_staff:
+                start = request.GET.get('start')
+                end = request.GET.get('end')
+                starts = datetime.strptime(start, '%Y-%m-%d')
+                ends = datetime.strptime(end, '%Y-%m-%d')
                 problem = get_object_or_404(Problem, pk=pk_problem)
                 user = get_user_model().objects.filter(id=id_user)
-                subs = Submission.objects.filter(user=user.get()).filter(problem=problem.id).order_by('-pk')
+                subs = Submission.objects.filter(user=user.get()) \
+                    .filter(problem=problem.id, creation_date__range=[starts, ends + timedelta(days=1)]).order_by('-pk')
             else:
                 return HttpResponseForbidden("Forbidden")
 
@@ -221,6 +290,24 @@ def show_submissions(request):
         return render(request, 'submissions.html', {'submissions': subs})
     except ValueError:
         return HttpResponseNotFound("El identificador no tiene el formato correcto")
+
+
+@login_required
+def show_achievements(request, user_id):
+    """View for show the achievements"""
+    this_user = get_user_model().objects.get(pk=user_id)
+    achievements_locked = []
+    achievements_unlocked = ObtainedAchievement.objects.filter(user=this_user)
+    achievements_definitions_unlocked = ObtainedAchievement.objects.filter(user=this_user).\
+        values_list('achievement_definition', flat=True)
+    all_achievements_definitions = AchievementDefinition.objects.values_list('pk', flat=True)
+    achievements_locked_pk = all_achievements_definitions.difference(achievements_definitions_unlocked)
+    for identifier in achievements_locked_pk:
+        ach = AchievementDefinition.objects.get(pk=identifier)
+        achievements_locked.append(ach)
+    return render(request, 'achievements.html', {'locked': achievements_locked,
+                                                 'unlocked': achievements_unlocked,
+                                                 'username': this_user.username})
 
 
 @login_required
@@ -251,7 +338,7 @@ def download(_, problem_id):
     """Returns a script with the creation and insertion of the problem"""
     get_object_or_404(Problem, pk=problem_id)
     # Look for problem pk in all the Problem classes
-    problem = get_child_problem(problem_id)
+    problem = get_subclass_problem(problem_id)
     response = HttpResponse()
     response['Content-Type'] = 'application/sql'
     response['Content-Disposition'] = "attachment; filename=create_insert.sql"
@@ -267,7 +354,7 @@ def submit(request, problem_id):
     """Process a user submission"""
     # Error 404 if there is no Problem 'pk'
     general_problem = get_object_or_404(Problem, pk=problem_id)
-    problem = get_child_problem(problem_id)
+    problem = get_subclass_problem(problem_id)
     submit_form = SubmitForm(request.POST)
     data = {'veredict': VeredictCode.IE, 'title': VeredictCode.IE.label,
             'message': VeredictCode.IE.message(), 'feedback': ''}
@@ -306,6 +393,9 @@ def submit(request, problem_id):
     submission = Submission(code=code, veredict_code=data['veredict'], veredict_message=data['message'],
                             user=request.user, problem=general_problem)
     submission.save()
+    # If veredict is correct look for an achievement to complete if it's possible
+    if data['veredict'] == VeredictCode.AC:
+        check_if_get_achievement(request.user)
     logger.debug('Stored submission %s', submission)
     return JsonResponse(data)
 
@@ -322,3 +412,77 @@ def test_error_500(request):
         elems = list()
         return HttpResponse(elems[55])  # list index out of range, error 500
     return HttpResponseNotFound()
+
+
+@login_required
+def download_ranking(request, collection_id):
+    """Download excel with the results of submissions"""
+    result_form = ResultForm(request.GET)
+
+    if request.user.is_staff and result_form.is_valid():
+        html = show_result(request, collection_id).content.decode('utf-8')
+        soup = BeautifulSoup(html, 'html.parser')
+        col = 1
+        row = 1
+        work = openpyxl.Workbook()
+        book = work.active
+
+        # Takes collection and date
+        data = soup.find_all("h2")
+        for i in data:
+            book.cell(row=row, column=col, value=i.string.strip())
+            row += 1
+
+        # Takes group
+        option = soup.find("option")
+        book.cell(row=row, column=col, value=option.string.strip())
+        row += 1
+
+        # Takes the first column of table (Pos, User, Exercises, Score, Solved)
+        ths = soup.find_all("th")
+        for i in ths:
+            if i.string is not None:
+                book.cell(row=row, column=col, value=i.string.strip())
+                col += 1
+            exercises = i.find_all("a")
+            for j in exercises:
+                if j.string is not None:
+                    book.cell(row=row, column=col, value=j['title'].strip())
+                    col += 1
+        col = 1
+        # Takes the information for each student
+        trs = soup.find_all("tr")
+        for i in trs:
+            tds = i.find_all("td")
+            # Information of a student (Pos, User, Exercises, Score, Solved)
+            for j in tds:
+                name = j.find('span', class_='ranking-username')
+                if name is not None :
+                    book.cell(row=row, column=col, value=name.string.strip())
+                    col += 1
+                if j.string is not None:
+                    book.cell(row=row, column=col, value=j.string.strip())
+                    col += 1
+                num_submissions = j.find_all("a")
+                for k in num_submissions:
+                    if k.string is not None:
+                        book.cell(row=row, column=col, value=k.string.strip())
+                        col += 1
+            col = 1
+            row += 1
+
+        # create a temporary file to save the workbook with the results
+        temp = tempfile.NamedTemporaryFile(mode='w+b', buffering=-1, suffix='.xlsx')
+        file = pathlib.Path(temp.name)
+        name = file.name
+        work.save(name)
+        response = HttpResponse(open(name, 'rb').read())
+        response['Content-Type'] = 'application/xlsx'
+        response['Content-Disposition'] = "attachment; filename=ranking.xlsx"
+        temp.close()
+        os.remove(name)
+        return response
+
+    if request.user.is_staff and not result_form.is_valid():
+        return HttpResponseNotFound(str(result_form.errors))
+    return HttpResponseForbidden("Forbidden")
