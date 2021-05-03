@@ -11,9 +11,9 @@ from django.test import TestCase, Client
 import django.contrib.auth
 from django.urls import reverse
 from django.contrib.auth.models import Group
-from django.core.exceptions import ValidationError
+
 from judge.models import Collection, SelectProblem, Submission, FunctionProblem, DMLProblem, ProcProblem, \
-    TriggerProblem, DiscriminantProblem
+    TriggerProblem
 from judge.types import VeredictCode
 import judge.tests.test_oracle
 from judge.tests.test_parse import ParseTest
@@ -22,7 +22,7 @@ from judge.feedback import filter_expected_db
 
 
 def create_select_problem(collection, name='Ejemplo'):
-    """Creates and stores a Select Problem"""
+    """ Creates and stores a Select Problem """
     create = 'CREATE TABLE test (n NUMBER);'
     insert = "INSERT INTO test VALUES (901)"
     solution = 'SELECT * FROM test'
@@ -210,17 +210,17 @@ class ViewsTest(TestCase):
         # OK and one collection with title
         response = client.get(collections_url, follow=True)
         self.assertEqual(response.status_code, 200)
-        self.assertIn(collection.name_md, response.content.decode('utf-8'))
+        self.assertIn(collection.name_html, response.content.decode('utf-8'))
 
         # OK and one problem in collection
         response = client.get(collection_url, follow=True)
         self.assertEqual(response.status_code, 200)
-        self.assertIn(problem.title_md, response.content.decode('utf-8'))
+        self.assertIn(problem.title_html, response.content.decode('utf-8'))
 
         # OK and title in problem page
         response = client.get(problem_url, follow=True)
         self.assertEqual(response.status_code, 200)
-        self.assertIn(problem.title_md, response.content.decode('utf-8'))
+        self.assertIn(problem.title_html, response.content.decode('utf-8'))
 
         # NotFound
         response = client.get(no_problem_url, follow=True)
@@ -253,7 +253,7 @@ class ViewsTest(TestCase):
 
         # There must be 7 submission to problem
         response = client.get(submissions_url, follow=True)
-        self.assertEqual(response.content.decode('utf-8').count(problem.title_md), 7)
+        self.assertEqual(response.content.decode('utf-8').count(problem.title_html), 7)
 
         # JSON with VE (new Problem)
         response = client.post(submit_dml_url, {'code': 'SELECT * FROM test where n = 1000'}, follow=True)
@@ -261,7 +261,7 @@ class ViewsTest(TestCase):
 
         # There must be 1 submission to new problem
         response = client.get(submissions_url, {'problem_id': problem_dml.pk, 'user_id': user.id}, follow=True)
-        self.assertEqual(response.content.decode('utf-8').count(problem_dml.title_md), 1)
+        self.assertEqual(response.content.decode('utf-8').count(problem_dml.title_html), 1)
 
         # problem_id is not numeric
         response = client.get(submissions_url, {'problem_id': 'problem', 'user_id': 'user'}, follow=True)
@@ -292,7 +292,7 @@ class ViewsTest(TestCase):
                                                 'start': first_day_of_course(datetime(2020, 9, 1)),
                                                 'end': datetime.today().strftime('%Y-%m-%d')},
                               follow=True)
-        self.assertEqual(response.content.decode('utf-8').count(problem_dml.title_md), 1)
+        self.assertEqual(response.content.decode('utf-8').count(problem_dml.title_html), 1)
         client.logout()
 
     def test_visibility_submission(self):
@@ -354,7 +354,7 @@ class ViewsTest(TestCase):
             problem_url = reverse('judge:problem', args=[problem.pk])
             response = client.get(problem_url, follow=True)
             self.assertEqual(response.status_code, 200)
-            self.assertIn(problem.title_md, response.content.decode('utf-8'))
+            self.assertIn(problem.title_html, response.content.decode('utf-8'))
 
     def test_download(self):
         """Download the script of a problem (CREATE + INSERT)"""
@@ -496,13 +496,13 @@ class ViewsTest(TestCase):
 
         response = client.get(classification_url, {
             'group': group_a.id, 'start': start, 'end': ''}, follow=True)
-        self.assertIn("field is required", response.content.decode('utf-8'))
+        self.assertIn("Este campo es obligatorio", response.content.decode('utf-8'))
         response = client.get(classification_url, {
             'group': group_a.id, 'start': 'eee', 'end': end}, follow=True)
-        self.assertIn("Enter a valid date", response.content.decode('utf-8'))
+        self.assertIn("Introduzca una fecha válida", response.content.decode('utf-8'))
         response = client.get(classification_url, {
             'group': group_a.id, 'end': end}, follow=True)
-        self.assertIn("field is required",
+        self.assertIn("Este campo es obligatorio",
                       response.content.decode('utf-8'))
         response = client.get(classification_url, {
             'group': group_a.id, 'start': start, 'end': start}, follow=True)
@@ -563,9 +563,9 @@ class ViewsTest(TestCase):
         self.assertNotIn(user_1.username, html)
 
         # I find that there are two exercises in the collection
-        self.assertIn(select_problem.title_md, html)
-        self.assertIn(dml_problem.title_md, html)
-        self.assertIn(select_problem_2.title_md, html)
+        self.assertIn(select_problem.title_html, html)
+        self.assertIn(dml_problem.title_html, html)
+        self.assertIn(select_problem_2.title_html, html)
 
         # I look at the group to where the students are
         response = client.get(classification_url,
@@ -581,7 +581,7 @@ class ViewsTest(TestCase):
         # I connect to a non-numeric group
         response = client.get(classification_url,
                               {'group': '1A', 'start': start, 'end': end}, follow=True)
-        msg = 'Enter a whole number'
+        msg = 'Introduzca un número entero'
         self.assertEqual(response.status_code, 404)
         self.assertIn(msg, response.content.decode('utf-8'))
         client.logout()
@@ -647,8 +647,8 @@ class ViewsTest(TestCase):
         response = client.get(result_url, follow=True)
         title = 'Colecciones'
         self.assertEqual(response.status_code, 200)
-        self.assertIn(collection.name_md, response.content.decode('utf-8'))
-        self.assertIn(collection_2.name_md, response.content.decode('utf-8'))
+        self.assertIn(collection.name_html, response.content.decode('utf-8'))
+        self.assertIn(collection_2.name_html, response.content.decode('utf-8'))
         self.assertIn(title, response.content.decode('utf-8'))
         client.logout()
         # the user without a group can't see the page results
@@ -772,46 +772,46 @@ class ViewsTest(TestCase):
 
     def test_filter_expected_db(self):
         """Test for filter an expected db and transform for another to show"""
-        initial = { 'ESTA SE BORRA': {'rows': [['11111X', 'Real', 'Concha', 70000]],
-                                 'header': [['CIF', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                        ['NOMBRE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
-                                        ['SEDE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
-                                        ['NUM_SOCIOS', '<cx_Oracle.DbType DB_TYPE_NUMBER>']]},
-                    'ESTA SE MODIFICA': {'rows': [['111X', '222X', '004X']],
-                                 'header': [['CIF_LOCAL', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['CIF_VISITANTE', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['NIF', '<cx_Oracle.DbType DB_TYPE_CHAR>']]},
-                    'ESTA SE QUEDA IGUAL': {'rows': [['111X', '222X', '004X']],
-                                 'header': [['CIF_LOCAL', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['CIF_VISITANTE', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['NIF', '<cx_Oracle.DbType DB_TYPE_CHAR>']]}}
-        expected = {'ESTA SE AGREGA': {'rows': [['11111X', 'Gandia', 'Guillermo Olague', 70000]],
+        initial = {'ESTA SE BORRA': {'rows': [['11111X', 'Real', 'Concha', 70000]],
                                      'header': [['CIF', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['NOMBRE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
-                                             ['SEDE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
-                                            ['NUM_SOCIOS', '<cx_Oracle.DbType DB_TYPE_NUMBER>']]},
+                                                ['NOMBRE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
+                                                ['SEDE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
+                                                ['NUM_SOCIOS', '<cx_Oracle.DbType DB_TYPE_NUMBER>']]},
+                   'ESTA SE MODIFICA': {'rows': [['111X', '222X', '004X']],
+                                        'header': [['CIF_LOCAL', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                   ['CIF_VISITANTE', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                   ['NIF', '<cx_Oracle.DbType DB_TYPE_CHAR>']]},
+                   'ESTA SE QUEDA IGUAL': {'rows': [['111X', '222X', '004X']],
+                                           'header': [['CIF_LOCAL', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                      ['CIF_VISITANTE', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                      ['NIF', '<cx_Oracle.DbType DB_TYPE_CHAR>']]}}
+        expected = {'ESTA SE AGREGA': {'rows': [['11111X', 'Gandia', 'Guillermo Olague', 70000]],
+                                       'header': [['CIF', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                  ['NOMBRE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
+                                                  ['SEDE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
+                                                  ['NUM_SOCIOS', '<cx_Oracle.DbType DB_TYPE_NUMBER>']]},
                     'ESTA SE MODIFICA': {'rows': [['111X', '333X', '004X']],
-                                     'header': [['CIF_LOCAL', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['CIF_VISITANTE', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['NIF', '<cx_Oracle.DbType DB_TYPE_CHAR>']]},
+                                         'header': [['CIF_LOCAL', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                    ['CIF_VISITANTE', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                    ['NIF', '<cx_Oracle.DbType DB_TYPE_CHAR>']]},
                     'ESTA SE QUEDA IGUAL': {'rows': [['111X', '222X', '004X']],
-                                    'header': [['CIF_LOCAL', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['CIF_VISITANTE', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['NIF', '<cx_Oracle.DbType DB_TYPE_CHAR>']]}}
+                                            'header': [['CIF_LOCAL', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                       ['CIF_VISITANTE', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                       ['NIF', '<cx_Oracle.DbType DB_TYPE_CHAR>']]}}
         result_added = {'ESTA SE AGREGA': {'rows': [['11111X', 'Gandia', 'Guillermo Olague', 70000]],
-                                'header': [['CIF', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['NOMBRE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
-                                            ['SEDE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
-                                            ['NUM_SOCIOS', '<cx_Oracle.DbType DB_TYPE_NUMBER>']]}}
+                                           'header': [['CIF', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                      ['NOMBRE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
+                                                      ['SEDE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
+                                                      ['NUM_SOCIOS', '<cx_Oracle.DbType DB_TYPE_NUMBER>']]}}
         result_modified = {'ESTA SE MODIFICA': {'rows': [['111X', '333X', '004X']],
-                                'header': [['CIF_LOCAL', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['CIF_VISITANTE', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['NIF', '<cx_Oracle.DbType DB_TYPE_CHAR>']]}}
+                                                'header': [['CIF_LOCAL', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                           ['CIF_VISITANTE', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                           ['NIF', '<cx_Oracle.DbType DB_TYPE_CHAR>']]}}
         result_removed = {'ESTA SE BORRA': {'rows': [['11111X', 'Real', 'Concha', 70000]],
-                                'header': [['CIF', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
-                                            ['NOMBRE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
-                                            ['SEDE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
-                                            ['NUM_SOCIOS', '<cx_Oracle.DbType DB_TYPE_NUMBER>']]}}
+                                            'header': [['CIF', '<cx_Oracle.DbType DB_TYPE_CHAR>'],
+                                                       ['NOMBRE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
+                                                       ['SEDE', '<cx_Oracle.DbType DB_TYPE_VARCHAR>'],
+                                                       ['NUM_SOCIOS', '<cx_Oracle.DbType DB_TYPE_NUMBER>']]}}
         ret_1, ret_2, ret_3 = filter_expected_db(expected, initial)
         self.assertEqual(ret_1, result_added)
         self.assertEqual(ret_2, result_modified)
@@ -829,21 +829,45 @@ class ViewsTest(TestCase):
         problem_url = reverse('judge:problem', args=[dml_problem.pk])
         response = client.get(problem_url, follow=True)
         self.assertEqual(response.status_code, 200)
-        self.assertIn('TEST_TABLE_1 (Tabla modificada)', response.content.decode('utf-8'))
-        self.assertIn('TEST_TABLE_2 (Tabla eliminada)', response.content.decode('utf-8'))
-        self.assertIn('TEST_TABLE_3 (Tabla modificada)', response.content.decode('utf-8'))
-        self.assertIn('NEW (Tabla añadida)', response.content.decode('utf-8'))
+        content = response.content.decode('utf-8')
+        self.assertIn('TEST_TABLE_1 (Tabla modificada)', content)
+        self.assertIn('TEST_TABLE_2 (Tabla eliminada)', content)
+        self.assertIn('TEST_TABLE_3 (Tabla modificada)', content)
+        self.assertIn('NEW (Tabla añadida)', content)
 
-    def test_failure_insert_discriminant(self):
-        """Test for check if discriminant clean raise ValidationError"""
-        create = 'CREATE TABLE test_table_1 (x NUMBER, n NUMBER);'
-        insert = "INSERT INTO test_table_1 VALUES (1997, 1997);\
-                  INSERT INTO test_table_2  VALUES (1994, 1994);"
-        correct = 'SELECT * FROM test_table_1 ORDER BY n ASC'
-        incorrect = 'SELECT * FROM test_table_1 ORDER BY x ASC'
-        collection = create_collection('Colleccion de prueba XYZ')
-        problem = DiscriminantProblem(title_md='name', text_md='texto largo', create_sql=create, insert_sql=insert,
-                                      correct_query=correct, incorrect_query=incorrect, check_order=False,
-                                      collection=collection)
-        with self.assertRaises(ValidationError):
-            problem.clean()
+    def test_help(self):
+        """ Help returns a help page in Spanish """
+        client = Client()
+        help_url = reverse('judge:help')
+        create_user('5555', 'pepe')
+        client.login(username='pepe', password='5555')
+        content = client.get(help_url, follow=True).content.decode('utf-8')
+        self.assertIn("Presentación", content)
+
+    def test_statistics(self):
+        """ Statistics contains some text for staff and redirects standard and not logged users """
+        client = Client()
+        stats_url = reverse('judge:statistics_submissions')
+        login_redirect_url = reverse('admin:login')
+        login_redirect_stats_url = f'{login_redirect_url}?next={stats_url}'
+
+        # Staff user
+        create_superuser('0000', username='staff')
+        client.login(username='staff', password='0000')
+        content = client.get(stats_url, follow=True).content.decode('utf-8')
+        self.assertIn("Número de envíos", content)
+        self.assertIn("TLE", content)
+        client.logout()
+
+        # Standard user -> redirects to admin login
+        create_user('5555', 'pepe')
+        client.login(username='pepe', password='5555')
+        response = client.get(stats_url, follow=True)
+        self.assertEqual(response.redirect_chain,
+                         [(login_redirect_stats_url, 302)])
+        client.logout()
+
+        # Not logged user -> redirects to admin login
+        response = client.get(stats_url, follow=True)
+        self.assertEqual(response.redirect_chain,
+                         [(login_redirect_stats_url, 302)])

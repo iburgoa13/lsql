@@ -98,7 +98,7 @@ class Collection(models.Model):
                     problem.clean()
                     problem.save()
                     logger.debug('Added problem %s "%s" from ZIP (batch)', type(problem), problem)
-                self.zipfile = None  # Avoids storing the file in the filysystem
+                self.zipfile = None  # Avoids storing the file in the filesystem
 
             super().clean()
             self.name_html = markdown_to_html(self.name_md, remove_initial_p=True)
@@ -123,6 +123,10 @@ class Collection(models.Model):
         return Submission.objects.filter(veredict_code='AC', problem__collection=self, user=user) \
             .distinct('problem').count()
 
+    def languages(self):
+        """Set with all the languages of the collection"""
+        return list(self.problems().order_by('language').distinct('language') \
+            .values_list('language', flat=True))
 
 class Problem(models.Model):
     """Base class for problems, with common attributes and methods"""
@@ -131,6 +135,7 @@ class Problem(models.Model):
     title_html = models.CharField(max_length=200)
     text_md = models.TextField(max_length=5000, blank=True)
     text_html = models.TextField(max_length=10000)
+    language = models.CharField(max_length=7, choices=settings.LANGUAGES, default=settings.LANGUAGE_CODE)
     create_sql = models.TextField(max_length=20000, blank=True)
     insert_sql = models.TextField(max_length=20000, blank=True)
     initial_db = JSONField(encoder=DjangoJSONEncoder, default=None, blank=True, null=True)
@@ -181,8 +186,9 @@ class Problem(models.Model):
         return Submission.objects.filter(problem=self, user=user).count()
 
     def solved_n_position(self, position):
-        """User who solved the problem in 'position' position"""
-        pks = Submission.objects.filter(problem=self, veredict_code=VeredictCode.AC) \
+        """User (non-staff and active) who solved the problem in 'position' position"""
+        active_students = get_user_model().objects.filter(is_staff=False, is_active=True)
+        pks = Submission.objects.filter(problem=self, veredict_code=VeredictCode.AC, user__in=active_students) \
             .order_by('user', 'pk').distinct('user').values_list('pk', flat=True)
         subs = Submission.objects.filter(pk__in=pks).order_by('pk')[position - 1:position]
         if len(subs) > 0 and subs[0] is not None:
@@ -190,23 +196,27 @@ class Problem(models.Model):
         return None
 
     def solved_first(self):
-        """User who solved first"""
+        """User (non-staff and active) who solved first"""
         return self.solved_n_position(1)
 
     def solved_second(self):
-        """User who solved second"""
+        """User (non-staff and active) who solved second"""
         return self.solved_n_position(2)
 
     def solved_third(self):
-        """User who solved third"""
+        """User (non-staff and active) who solved third"""
         return self.solved_n_position(3)
 
     def solved_position(self, user):
-        """Position that user solved the problem. If not solved return None"""
+        """Position that user solved the problem (ignoring staff and inactive users). If not solved return None"""
         if self.solved_by_user(user):
+            active_students = get_user_model().objects.filter(is_staff=False, is_active=True)
             iterator = 1
-            users_ac = Submission.objects.filter(problem=self, veredict_code=VeredictCode.AC).order_by('pk', 'user').\
-                distinct('pk', 'user').values_list('user', flat=True)
+            users_ac = (Submission.objects.
+                        filter(problem=self, user__in=active_students, veredict_code=VeredictCode.AC).
+                        order_by('pk', 'user').
+                        distinct('pk', 'user').
+                        values_list('user', flat=True))
             for users in users_ac:
                 if users == user.pk:
                     return iterator
@@ -460,7 +470,7 @@ class DiscriminantProblem(Problem):
 
 
 class Submission(models.Model):
-    """A user submssion"""
+    """ A user submission """
     creation_date = models.DateTimeField(auto_now_add=True)
     code = models.CharField(max_length=5000, validators=[MinLengthValidator(1)])
     veredict_code = models.CharField(
@@ -582,3 +592,58 @@ class NumSolvedCollectionAchievementDefinition(AchievementDefinition, models.Mod
                                                       obtained_date=order_problem_creation_date[self.num_problems - 1],
                                                       achievement_definition=self)
                 new_achievement.save()
+
+
+class NumSolvedTypeAchievementDefinition(AchievementDefinition, models.Model):
+    """Achievement by solving X problems of a Type"""
+    num_problems = models.PositiveIntegerField(default=1, null=False)
+    problem_type = models.CharField(
+        max_length=5000,
+        choices=list(ProblemType.__members__.items()),
+        validators=[MinLengthValidator(1)],
+        blank=True
+    )
+
+    def check_and_save(self, user):
+        """Check if an user is deserving for get an achievement, if it is, save that"""
+        if not self.check_user(user):
+            count = 0
+            # First submission of each Problem that user have VeredictCode.AC. Ordered by 'creation_date'
+            # Subquery return a list of creation_date of the problems that user have VeredictCode.AC
+            order_problem_creation_date = Submission.objects.filter(creation_date__in=Subquery(
+                Submission.objects.filter(veredict_code=VeredictCode.AC, user=user).
+                order_by('problem', 'creation_date').distinct('problem').values('creation_date')
+            )).order_by('creation_date')
+            for sub in order_problem_creation_date:
+                problem = Problem.objects.filter(pk=sub.problem.pk).select_subclasses()
+                if problem[0].problem_type().name == self.problem_type:
+                    count += 1
+                    if count >= self.num_problems:
+                        new_achievement = ObtainedAchievement(user=user,
+                                                              obtained_date=sub.creation_date,
+                                                              achievement_definition=self)
+                        new_achievement.save()
+                        return
+
+
+class NumSubmissionsProblemsAchievementDefinition(AchievementDefinition, models.Model):
+    """Achievement by submitting X submissions of Y problems"""
+    num_submissions = models.PositiveIntegerField(default=1, null=False)
+    num_problems = models.PositiveIntegerField(default=1, null=False)
+
+    def check_and_save(self, user):
+        """Check if an user is deserving for get an achievement, if it is, save that"""
+        if not self.check_user(user):
+            total_submissions = Submission.objects.filter(user=user).count()
+            if total_submissions >= self.num_submissions:
+                total_prob = Submission.objects.filter(user=user).distinct("problem").count()
+                if total_prob >= self.num_problems:
+                    # First submission of each Problem that user have VeredictCode.AC. Ordered by 'creation_date'
+                    # Subquery return a list of creation_date of the problems that user submitted a solution
+                    order_problem_creation_date = Submission.objects.filter(creation_date__in=Subquery(
+                        Submission.objects.filter(user=user).order_by('problem', 'creation_date').distinct('problem').
+                        values('creation_date'))).order_by('creation_date').values_list('creation_date', flat=True)
+                    new_achi = ObtainedAchievement(user=user,
+                                                   obtained_date=order_problem_creation_date[self.num_problems-1],
+                                                   achievement_definition=self)
+                    new_achi.save()

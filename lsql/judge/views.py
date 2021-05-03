@@ -10,6 +10,7 @@ import os
 import pathlib
 from bs4 import BeautifulSoup
 import openpyxl
+from logzero import logger
 
 from django.http import HttpResponseRedirect, JsonResponse, HttpResponseForbidden
 from django.http.response import HttpResponse, HttpResponseNotFound
@@ -18,14 +19,28 @@ from django.shortcuts import render, get_object_or_404
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.contrib.auth.decorators import login_required
-from logzero import logger
+from django.utils.translation import gettext_lazy as _
+from django.contrib.admin.views.decorators import staff_member_required
 
 from .exceptions import ExecutorException
 from .feedback import compile_error_to_html_table, filter_expected_db
 from .forms import SubmitForm, ResultForm
-from .models import Collection, Problem, Submission, ObtainedAchievement, AchievementDefinition
+from .models import Collection, Problem, Submission, ObtainedAchievement, AchievementDefinition, \
+    NumSubmissionsProblemsAchievementDefinition
 from .oracle_driver import OracleExecutor
 from .types import VeredictCode, OracleStatusCode, ProblemType
+from .statistics import submissions_by_day, submission_count
+
+# TRANSLATIONS #
+# To translate the code to another language you need to create the translation file:
+# 1) $ django-admin makemessages -l en
+#    where "en" is the English language code.
+# 2) Complete the msgstr in lsql/locale/en/LC_MESSAGES/django.po with the new translations.
+# 3) $ django-admin compilemessages
+#
+# If the msgstr is empty, it will use the msgid instead. 2) Use these commands everytime you add a new translation
+# outside the translation file. It won't remove existing translations.
+# FOR WINDOWS: https://mlocati.github.io/articles/gettext-iconv-windows.html is necessary to execute the commands.
 
 
 ####################
@@ -96,10 +111,15 @@ def update_user_attempts_problem(attempts, user, problem, num_accepted, collecti
     user.collection.append(problem)
 
 
-def check_if_get_achievement(user):
+def check_if_get_achievement(user, veredict):
     """Check if the user get some achievement"""
-    for ach in AchievementDefinition.objects.all().select_subclasses():
-        ach.check_and_save(user)
+    if veredict == VeredictCode.AC:
+        for ach in AchievementDefinition.objects.all().select_subclasses():
+            ach.check_and_save(user)
+    # If the veredict != AC (correct) only can get a NumSubmissionsProblemsAchievementDefinition
+    else:
+        for ach in NumSubmissionsProblemsAchievementDefinition.objects.all():
+            ach.check_and_save(user)
 
 
 ##############
@@ -112,12 +132,19 @@ def index(_):
 
 
 @login_required
+def help_page(request):
+    """ Shows help page """
+    # FIX: handle languages
+    return render(request, 'help.es.html')
+
+
+@login_required
 def show_result(request, collection_id):
     """show the ranking of a group (GET param) for collection_id"""
     if not Group.objects.all():
         # Show an informative message if there are not groups in the system
         return render(request, 'generic_error_message.html',
-                      {'error': ['¡Lo sentimos! No existe ningún grupo para ver resultados']})
+                      {'error': [_('¡Lo sentimos! No existe ningún grupo para ver resultados')]})
     position = 1
     result_form = ResultForm(request.GET)
     start = None
@@ -190,14 +217,14 @@ def show_results(request):
     if not Group.objects.all():
         # Show an informative message if there are not groups in the system
         return render(request, 'generic_error_message.html',
-                      {'error': ['¡Lo sentimos! No existe ningún grupo para ver resultados']})
+                      {'error': [_('¡Lo sentimos! No existe ningún grupo para ver resultados')]})
 
     cols = Collection.objects.all().order_by('position', '-creation_date')
     groups_user = request.user.groups.all().order_by('name')
     if groups_user.count() == 0 and not request.user.is_staff:
         return render(request, 'generic_error_message.html',
-                      {'error': ['¡Lo sentimos! No tienes asignado un grupo de la asignatura.',
-                                 'Por favor, contacta con tu profesor para te asignen un grupo de clase.']
+                      {'error': [_('¡Lo sentimos! No tienes asignado un grupo de la asignatura.'),
+                                 _('Por favor, contacta con tu profesor para te asignen un grupo de clase.')]
                        })
     if groups_user.count() == 0 and request.user.is_staff:
         groups_user = Group.objects.all().order_by('name')
@@ -289,7 +316,7 @@ def show_submissions(request):
             submission.veredict_pretty = VeredictCode(submission.veredict_code).html_short_name()
         return render(request, 'submissions.html', {'submissions': subs})
     except ValueError:
-        return HttpResponseNotFound("El identificador no tiene el formato correcto")
+        return HttpResponseNotFound(_("El identificador no tiene el formato correcto"))
 
 
 @login_required
@@ -373,9 +400,11 @@ def submit(request, problem_id):
                     'veredict': VeredictCode.RE,
                     'title': VeredictCode.RE.label,
                     'message': VeredictCode.RE.message(),
-                    'feedback': f'{excp.statement} --> {excp.message}' if problem.problem_type() == ProblemType.FUNCTION
-                    else excp.message,
-                    'position': excp.position
+                    'feedback': (f'{excp.statement} --> {excp.message}'
+                                 if problem.problem_type() == ProblemType.FUNCTION else excp.message),
+                    'position': excp.position,
+                    'position_msg': _('Posición: línea {row}, columna {col}').format(row=excp.position[0]+1,
+                                                                                     col=excp.position[1]+1)
                 }
             elif excp.error_code == OracleStatusCode.TLE_USER_CODE:
                 data = {'veredict': VeredictCode.TLE, 'title': VeredictCode.TLE.label,
@@ -393,9 +422,8 @@ def submit(request, problem_id):
     submission = Submission(code=code, veredict_code=data['veredict'], veredict_message=data['message'],
                             user=request.user, problem=general_problem)
     submission.save()
-    # If veredict is correct look for an achievement to complete if it's possible
-    if data['veredict'] == VeredictCode.AC:
-        check_if_get_achievement(request.user)
+    # If verdict is correct look for an achievement to complete if it's possible
+    check_if_get_achievement(request.user, data['veredict'])
     logger.debug('Stored submission %s', submission)
     return JsonResponse(data)
 
@@ -428,13 +456,13 @@ def download_ranking(request, collection_id):
         book = work.active
 
         # Takes collection and date
-        data = soup.find_all("h2")
+        data = soup.find_all("h1")
         for i in data:
             book.cell(row=row, column=col, value=i.string.strip())
             row += 1
 
         # Takes group
-        option = soup.find("option")
+        option = soup.find(id='clase').find("option")
         book.cell(row=row, column=col, value=option.string.strip())
         row += 1
 
@@ -457,7 +485,7 @@ def download_ranking(request, collection_id):
             # Information of a student (Pos, User, Exercises, Score, Solved)
             for j in tds:
                 name = j.find('span', class_='ranking-username')
-                if name is not None :
+                if name is not None:
                     book.cell(row=row, column=col, value=name.string.strip())
                     col += 1
                 if j.string is not None:
@@ -486,3 +514,21 @@ def download_ranking(request, collection_id):
     if request.user.is_staff and not result_form.is_valid():
         return HttpResponseNotFound(str(result_form.errors))
     return HttpResponseForbidden("Forbidden")
+
+
+@staff_member_required
+def statistics_submissions(request):
+    """ Shows statistics page containing charts and other summarized information """
+    all_submissions_count = submissions_by_day()
+    start = all_submissions_count[0][0] if all_submissions_count else None
+    end = all_submissions_count[-1][0] if all_submissions_count else None
+    ac_submissions = submissions_by_day(start, end, verdict_code=VeredictCode.AC)
+    wa_submissions = submissions_by_day(start, end, verdict_code=VeredictCode.WA)
+    re_submissions = submissions_by_day(start, end, verdict_code=VeredictCode.RE)
+    sub_count = submission_count()
+    return render(request, 'statistics_submissions.html',
+                  {'all_submissions_count': all_submissions_count,
+                   'ac_submissions_count': ac_submissions,
+                   'wa_submissions_count': wa_submissions,
+                   're_submissions_count': re_submissions,
+                   'submission_count': sub_count})

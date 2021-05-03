@@ -1,26 +1,37 @@
 {% extends "base_menu.html" %}
+{% load i18n %}
+{% load languages_to_flags %}
 {% load static %}
 {% block contenido %}
-  <h2>Colecciones de problemas</h2>
+  <h1>{% translate "Colecciones de problemas" %}</h1>
 
   <table class="table">
-    <thead class="thead-dark">
+    <thead class="table-dark">
       <tr>
-        <th scope="col">Nombre</th>
-        <th scope="col">Resueltos</th>
-        <th scope="col">Total problemas</th>
+        <th scope="col">{% translate "Nombre" %}</th>
+        <th scope="col">{% translate "Resueltos" %}</th>
+        <th scope="col">{% translate "Total problemas" %}</th>
       </tr>
     </thead>
     <tbody>
     {% for c in collections %}
+    {% collection_flags c.languages as flags %}
     <tr>
-      <td>
-        {% if c.num_problems == c.num_solved %}
-        <img src="{% static "judge/img/tick.svg" %}" alt="Coleccion terminada" height="20">
-        {% else %}
-        <img src="{% static "judge/img/tick.svg" %}" alt="Colección no terminada" style="visibility: hidden" height="20">
-        {% endif %}
-        <a href="{% url 'judge:collection' c.id %}">{{ c.name_html|safe }}</a>
+      <td class="d-flex">
+        <div>
+          {% if c.num_problems == c.num_solved %}
+          <i class="bi bi-check-circle-fill green-success" aria-hidden="true"></i>
+          <span class="off-screen">{% translate "Colección terminada" %}</span>
+          {% else %}
+          <i class="bi bi-check-circle-fill icon-hidden" aria-hidden="true"></i>
+          {% endif %}
+          <a href="{% url 'judge:collection' c.id %}">{{ c.name_html|safe }}</a>
+        </div>
+        <div class="mx-2 flags">
+          {% for flag in flags %}
+            <span class="{{ flag }}"></span>
+          {% endfor %}
+        </div>
       </td>
       <td>{{ c.num_solved }}</td>
       <td>{{ c.num_problems }}</td>

@@ -14,13 +14,6 @@ textarea.code_box {
     font-family: monospace;
 }
 
-div#codigo {
-    border-style: solid;
-    position: relative;
-    width: 100%;
-    margin: auto;
-}
-
 div#feedback_line {
     font-weight: bold;
     font-style: oblique;
@@ -50,4 +43,70 @@ div#feedback_line {
 
 .bronze{
     color: #AD8A56;
+}
+
+.green-success {
+    color: #228B22;
+}
+
+.remark{
+    font-style: italic;
+    font-weight: bold;
+}
+
+.help_big{
+    font-weight: bold;
+    font-size: large;
+    text-decoration: underline;
+}
+
+h1.help {
+    padding-top: 50px;
+}
+
+h2.help {
+    padding-top: 25px;
+}
+
+img.screenshot {
+    border-style: solid;
+}
+
+.off-screen {
+   /* Tag for describing informative icons (for accessibility) */
+   position: absolute;
+   left: -99999rem;
+}
+
+.icon-hidden {
+    visibility: hidden;
+}
+
+.main-link {
+    text-decoration: none;
+}
+
+.bigger-icon {
+    font-size: x-large
+}
+
+h1 {
+    font-size: xx-large;
+}
+
+h2 {
+    font-size: x-large;
+}
+
+h3 {
+    font-size: large;
+}
+
+nav.menu_bar {
+/*
+    background-color: #333300;
+    background-color: #003300;
+    background-color: #006666;
+*/
+    background-color: #003366;
 }

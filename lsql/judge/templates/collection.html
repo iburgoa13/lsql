@@ -1,32 +1,33 @@
 {% extends "base_menu.html" %}
+{% load i18n %}
 {% load static %}
 {% block contenido %}
-<h2>{{collection.name_html|safe}}</h2>
+<h1>{{collection.name_html|safe}}</h1>
 {{collection.description_html|safe}}
 
 
-  <h4>Listado de problemas</h4>
+  <h2>{% translate "Listado de problemas" %}</h2>
   <table class="table">
-    <thead class="thead-dark">
+    <thead class="table-dark">
       <tr>
-        <th scope="col">Nombre</th>
-        <th scope="col">Número de envíos</th>
+        <th scope="col">{% translate "Nombre" %}</th>
+        <th scope="col">{% translate "Número de envíos" %}</th>
         <th scope="col" class="text-center">
           
-          <i class="fas fa-award gold"></i>
-          <span>1º</span>
-          <i class="fas fa-award gold"></i>
+          <i class="bi bi-award-fill gold"></i>
+          <span>{% translate "1º" %}</span>
+          <i class="bi bi-award-fill gold"></i>
         </th>
         <th scope="col" class="text-center">
-          <i class="fas fa-award silver"></i>
-          <span>2º</span>
-          <i class="fas fa-award silver"></i>
+          <i class="bi bi-award-fill silver"></i>
+          <span>{% translate "2º" %}</span>
+          <i class="bi bi-award-fill silver"></i>
         </th>
         <th scope="col" class="text-center">
 
-          <i class="fas fa-award bronze"></i>
-          <span>3º</span>
-          <i class="fas fa-award bronze"></i>
+          <i class="bi bi-award-fill bronze"></i>
+          <span>{% translate "3º" %}</span>
+          <i class="bi bi-award-fill bronze"></i>
         </th>
       </tr>
     </thead>
@@ -35,9 +36,10 @@
     <tr>
       <td>
         {% if p.solved %}
-        <img src="{% static 'judge/img/tick.svg' %}" alt="Problema resuelto" height="20">
+        <i class="bi bi-check-circle-fill green-success" aria-hidden="true"></i>
+        <span class="off-screen">{% translate "Problema resuelto" %}</span>
         {% else %}
-        <img src="{% static 'judge/img/tick.svg' %}" alt="Problema resuelto" style="visibility: hidden" height="20">
+        <i class="bi bi-check-circle-fill icon-hidden" aria-hidden="true"></i>
         {% endif %}
         <a href="{% url 'judge:problem' p.pk %}">{{ p.title_html|safe }}</a>
       </td>

@@ -10,15 +10,16 @@ from django.contrib import admin
 from . import forms
 from .models import Collection, SelectProblem, DMLProblem, FunctionProblem, ProcProblem, TriggerProblem, Problem, \
     Submission, AchievementDefinition, NumSolvedCollectionAchievementDefinition, PodiumAchievementDefinition, \
-    NumSolvedAchievementDefinition, ObtainedAchievement, DiscriminantProblem
+    NumSolvedAchievementDefinition, ObtainedAchievement, DiscriminantProblem, NumSolvedTypeAchievementDefinition, \
+    NumSubmissionsProblemsAchievementDefinition
 
 
 class SelectProblemAdmin(admin.ModelAdmin):
     """Model for SelectProblem"""
     fieldsets = [
         ('ZIP file (if present, it will overwrite the rest of fields)', {'fields': ['zipfile']}),
-        ('Basic Information', {'fields': ['title_md', 'text_md', 'min_stmt', 'max_stmt', 'collection', 'author',
-                                          'position', 'check_order']}),
+        ('Basic Information', {'fields': ['language', 'title_md', 'text_md', 'min_stmt', 'max_stmt', 'collection',
+                                          'author', 'position', 'check_order']}),
         ('SQL', {'fields': ['create_sql', 'insert_sql', 'solution']}),
     ]
     list_display = ('title_md', 'creation_date', 'collection')
@@ -29,8 +30,8 @@ class DMLProblemAdmin(admin.ModelAdmin):
     """Model for DMLProblem"""
     fieldsets = [
         ('ZIP file (if present, it will overwrite the rest of fields)', {'fields': ['zipfile']}),
-        ('Basic Information', {'fields': ['title_md', 'text_md', 'min_stmt', 'max_stmt', 'collection', 'author',
-                                          'position', 'check_order']}),
+        ('Basic Information', {'fields': ['language', 'title_md', 'text_md', 'min_stmt', 'max_stmt', 'collection',
+                                          'author', 'position', 'check_order']}),
         ('SQL', {'fields': ['create_sql', 'insert_sql', 'solution']}),
     ]
     list_display = ('title_md', 'creation_date', 'collection')
@@ -41,8 +42,8 @@ class FunctionProblemAdmin(admin.ModelAdmin):
     """Model for FunctionProblem"""
     fieldsets = [
         ('ZIP file (if present, it will overwrite the rest of fields)', {'fields': ['zipfile']}),
-        ('Basic Information', {'fields': ['title_md', 'text_md', 'min_stmt', 'max_stmt', 'collection', 'author',
-                                          'position', 'check_order']}),
+        ('Basic Information', {'fields': ['language', 'title_md', 'text_md', 'min_stmt', 'max_stmt', 'collection',
+                                          'author', 'position', 'check_order']}),
         ('SQL', {'fields': ['create_sql', 'insert_sql', 'solution', 'calls']}),
     ]
     list_display = ('title_md', 'creation_date', 'collection')
@@ -54,8 +55,8 @@ class ProcProblemAdmin(admin.ModelAdmin):
     """Model for ProcProblem"""
     fieldsets = [
         ('ZIP file (if present, it will overwrite the rest of fields)', {'fields': ['zipfile']}),
-        ('Basic Information', {'fields': ['title_md', 'text_md', 'min_stmt', 'max_stmt', 'collection', 'author',
-                                          'position', 'check_order']}),
+        ('Basic Information', {'fields': ['language', 'title_md', 'text_md', 'min_stmt', 'max_stmt', 'collection',
+                                          'author', 'position', 'check_order']}),
         ('SQL', {'fields': ['create_sql', 'insert_sql', 'solution', 'proc_call']}),
     ]
     list_display = ('title_md', 'creation_date', 'collection')
@@ -67,8 +68,8 @@ class TriggerProblemAdmin(admin.ModelAdmin):
     """Model for TriggerProblem"""
     fieldsets = [
         ('ZIP file (if present, it will overwrite the rest of fields)', {'fields': ['zipfile']}),
-        ('Basic Information', {'fields': ['title_md', 'text_md', 'min_stmt', 'max_stmt', 'collection', 'author',
-                                          'position', 'check_order']}),
+        ('Basic Information', {'fields': ['language', 'title_md', 'text_md', 'min_stmt', 'max_stmt', 'collection',
+                                          'author', 'position', 'check_order']}),
         ('SQL', {'fields': ['create_sql', 'insert_sql', 'solution', 'tests']}),
     ]
     list_display = ('title_md', 'creation_date', 'collection')
@@ -80,8 +81,8 @@ class DiscriminantProblemAdmin(admin.ModelAdmin):
     """Model for FunctionProblem"""
     fieldsets = [
         ('ZIP file (if present, it will overwrite the rest of fields)', {'fields': ['zipfile']}),
-        ('Basic Information', {'fields': ['title_md', 'text_md', 'min_stmt', 'max_stmt', 'collection', 'author',
-                                          'position', 'check_order']}),
+        ('Basic Information', {'fields': ['language', 'title_md', 'text_md', 'min_stmt', 'max_stmt', 'collection',
+                                          'author', 'position', 'check_order']}),
         ('SQL', {'fields': ['create_sql', 'insert_sql', 'correct_query', 'incorrect_query']}),
     ]
     list_display = ('title_md', 'creation_date', 'collection')
@@ -142,6 +143,18 @@ class ObtainedAchievementAdmin(admin.ModelAdmin):
     list_filter = ['user']
 
 
+class NumSolvedTypeAchievementDefinitionAdmin(admin.ModelAdmin):
+    """Model for Achievements"""
+    list_display = ('name', 'description', 'num_problems', 'problem_type')
+    list_filter = ['name']
+
+
+class NumSubmissionsProblemsAchievementDefinitionAdmin(admin.ModelAdmin):
+    """Model for Achievements"""
+    list_display = ('name', 'description', 'num_problems', 'num_submissions')
+    list_filter = ['name']
+
+
 admin.site.register(Collection, CollectionAdmin)
 admin.site.register(Problem, ProblemAdmin)
 admin.site.register(SelectProblem, SelectProblemAdmin)
@@ -156,3 +169,5 @@ admin.site.register(PodiumAchievementDefinition, PodiumAchievementDefinitionAdmi
 admin.site.register(NumSolvedAchievementDefinition, NumSolvedAchievementDefinitionAdmin)
 admin.site.register(ObtainedAchievement, ObtainedAchievementAdmin)
 admin.site.register(DiscriminantProblem, DiscriminantProblemAdmin)
+admin.site.register(NumSolvedTypeAchievementDefinition, NumSolvedTypeAchievementDefinitionAdmin)
+admin.site.register(NumSubmissionsProblemsAchievementDefinition, NumSubmissionsProblemsAchievementDefinitionAdmin)
