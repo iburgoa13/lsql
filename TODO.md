@@ -135,3 +135,39 @@ en un esquema limpio de BD. Los esquemas generados de esta forma deben
 permitir un nivel de persistencia asociado al usuario, por ejemplo
 hasta las 00:00 del día siguiente. O mejor aún, que se pueda
 configurar para cada usuario.
+  
+# Ideas surgidas en el taller de LearnSQL (19 de mayo de 2021)
+* Realizar una medida de la complejidad de la consulta enviada por el usuario. 
+  En general esto puede ser complejo, pero se podría usar una métrica sencilla como
+  que no utiliza tablas innecesarias de acuerdo con la solución oficial.
+* Como el usuario ve la base de datos y el resultado esperado, se puede *cablear*
+  una consulta que devuelva los datos adecuados sin reunir tablas ni realizar 
+  `GROUP BY` o similar. Se podría definir un conjunto de comprobaciones personalizables
+  a realizar en el envío del usuario. Debería ser sencillo de configurar por parte del 
+  profesor y mostrarse a los alumnos para que sepan desde el principio los requisitos 
+  a cumplir:
+   1. La consulta involucra las tablas necesarias
+   1. Debe contener `GROUP BY`, `ORDER BY`, una consulta anidada, una operación `EXCEPT`,
+      etc.
+   1. La consulta no puede tener expresiones en la selección de columnas
+* Los mensajes de Oracle son muy poco informativos. Estudiar con Fernando Sáenz la
+  posibilidad de utilizar analizadores más potentes como los que usa DES para mejorar
+  los mensajes de error.
+
+# Otras ideas que pueden ser interesantes (Jesús)
+* Crear un modo "examen" que restrinja el acceso a determinados ejercicios, pistas, etc. 
+  y que se puedan asignar pesos a los ejercicios que formen el examen para obtener una
+  calificación automática. Habilitar un campo para que el profesor pueda introducir una 
+  calificación manual para obtener la calificación final.
+* Establecer criterios para evitar que el alumno pueda introducir consultas falsas que 
+  resuelven el problema con la BD inicial pero no son correctas para otras BD (está 
+  relacionado con problemas discriminantes, pero no es lo mismo). Por ejemplo, si la 
+  respuesta a un problema es una sola fila con "1", evitar soluciones del tipo "SELECT 1 
+  FROM DUAL". Generalizar esto para poder comprobar que un problema se resuelve de 
+  determinada forma (por ejemplo, con consultas anidadas, o con reuniones externas,
+  etc.).
+* Poder añadir referencias (o enlaces) a material docente (transparencias, capítulos de 
+  libro, sitios web). Que se puedan añadir en el enunciado del problema o en pistas. Se 
+  podría incluir el pdf del material del curso como parte del enunciado del problema.
+* Añadir en los problemas sugerencias de otros problemas que se recomienda hacer antes
+  o después de ese problema. También problemas relacionados.

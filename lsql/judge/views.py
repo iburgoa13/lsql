@@ -21,15 +21,19 @@ from django.contrib.auth.models import Group
 from django.contrib.auth.decorators import login_required
 from django.utils.translation import gettext_lazy as _
 from django.contrib.admin.views.decorators import staff_member_required
+from django.conf import settings
+from django.template.exceptions import TemplateDoesNotExist
+from django.template.loader import render_to_string
+from django.views.decorators.http import require_POST
 
 from .exceptions import ExecutorException
 from .feedback import compile_error_to_html_table, filter_expected_db
 from .forms import SubmitForm, ResultForm
 from .models import Collection, Problem, Submission, ObtainedAchievement, AchievementDefinition, \
-    NumSubmissionsProblemsAchievementDefinition
+    NumSubmissionsProblemsAchievementDefinition, Hint, UsedHint
 from .oracle_driver import OracleExecutor
 from .types import VeredictCode, OracleStatusCode, ProblemType
-from .statistics import submissions_by_day, submission_count
+from .statistics import submissions_by_day, submission_count, participation_per_group
 
 # TRANSLATIONS #
 # To translate the code to another language you need to create the translation file:
@@ -112,14 +116,20 @@ def update_user_attempts_problem(attempts, user, problem, num_accepted, collecti
 
 
 def check_if_get_achievement(user, veredict):
-    """Check if the user get some achievement"""
+    """Check if the user get some achievement and return a list of obtained achievements"""
+    obtained_achievements = []
     if veredict == VeredictCode.AC:
         for ach in AchievementDefinition.objects.all().select_subclasses():
-            ach.check_and_save(user)
+            if ach.check_and_save(user):
+                obtained_achievements.append(ach)
+
     # If the veredict != AC (correct) only can get a NumSubmissionsProblemsAchievementDefinition
     else:
         for ach in NumSubmissionsProblemsAchievementDefinition.objects.all():
-            ach.check_and_save(user)
+            if ach.check_and_save(user):
+                obtained_achievements.append(ach)
+
+    return obtained_achievements
 
 
 ##############
@@ -134,8 +144,10 @@ def index(_):
 @login_required
 def help_page(request):
     """ Shows help page """
-    # FIX: handle languages
-    return render(request, 'help.es.html')
+    try:
+        return render(request, 'help.'+ request.LANGUAGE_CODE + '.html')
+    except TemplateDoesNotExist:
+        return render(request, 'help.'+ settings.LANGUAGE_CODE + '.html')
 
 
 @login_required
@@ -280,6 +292,17 @@ def show_problem(request, problem_id):
     # Filter the expected result to display it
     problem.show_added, problem.show_modified, problem.show_removed = filter_expected_db(problem.expected_result[0],
                                                                                          problem.initial_db[0])
+    problem.available_hints = Hint.objects.filter(problem=problem).order_by('num_submit').count()
+    used_hints = UsedHint.objects.filter(user=request.user).filter(hint_definition__problem=problem)
+    hints = []
+    cont = 0
+    for used in used_hints:
+        cont += 1
+        name = _('Pista {number}').format(number=cont)
+        dic = {'num':  name, 'text_html': used.hint_definition.get_text_html()}
+        hints.append(dic)
+    problem.used_hints = hints
+    problem.used = len(hints)
     return render(request, problem.template(), {'problem': problem})
 
 
@@ -335,6 +358,21 @@ def show_achievements(request, user_id):
     return render(request, 'achievements.html', {'locked': achievements_locked,
                                                  'unlocked': achievements_unlocked,
                                                  'username': this_user.username})
+
+
+@login_required
+def show_hints(request):
+    """View for show the used hints"""
+    context = {'user': request.user, 'elements': {}}
+    dic = {}
+    hints = UsedHint.objects.filter(user=request.user.pk).order_by('request_date')
+    for hint in hints:
+        if hint.hint_definition.problem.pk in dic:
+            dic[hint.hint_definition.problem.pk].append(hint)
+        else:
+            dic[hint.hint_definition.problem.pk] = [hint]
+    context['elements'] = dic
+    return render(request, 'hints.html', context)
 
 
 @login_required
@@ -423,7 +461,16 @@ def submit(request, problem_id):
                             user=request.user, problem=general_problem)
     submission.save()
     # If verdict is correct look for an achievement to complete if it's possible
-    check_if_get_achievement(request.user, data['veredict'])
+    achieve_list = check_if_get_achievement(request.user, data['veredict'])
+
+    if achieve_list:
+        if len(achieve_list) == 1:
+            sentence = _("Además, con este envío has conseguido el logro ")
+        else:
+            sentence = _("Además, con este envío has conseguido los logros ")
+        context = {'achieve': achieve_list, 'user': request.user.pk, 'sentence': sentence}
+        html = render_to_string('achievement_notice.html', context)
+        data['achievements'] = html
     logger.debug('Stored submission %s', submission)
     return JsonResponse(data)
 
@@ -500,14 +547,13 @@ def download_ranking(request, collection_id):
             row += 1
 
         # create a temporary file to save the workbook with the results
-        temp = tempfile.NamedTemporaryFile(mode='w+b', buffering=-1, suffix='.xlsx')
-        file = pathlib.Path(temp.name)
-        name = file.name
-        work.save(name)
-        response = HttpResponse(open(name, 'rb').read())
-        response['Content-Type'] = 'application/xlsx'
-        response['Content-Disposition'] = "attachment; filename=ranking.xlsx"
-        temp.close()
+        with tempfile.NamedTemporaryFile(mode='w+b', buffering=-1, suffix='.xlsx') as temp:
+            file = pathlib.Path(temp.name)
+            name = file.name
+            work.save(name)
+            response = HttpResponse(open(name, 'rb').read())
+            response['Content-Type'] = 'application/xlsx'
+            response['Content-Disposition'] = "attachment; filename=ranking.xlsx"
         os.remove(name)
         return response
 
@@ -526,9 +572,50 @@ def statistics_submissions(request):
     wa_submissions = submissions_by_day(start, end, verdict_code=VeredictCode.WA)
     re_submissions = submissions_by_day(start, end, verdict_code=VeredictCode.RE)
     sub_count = submission_count()
+    involved_users = participation_per_group()
     return render(request, 'statistics_submissions.html',
                   {'all_submissions_count': all_submissions_count,
                    'ac_submissions_count': ac_submissions,
                    'wa_submissions_count': wa_submissions,
                    're_submissions_count': re_submissions,
-                   'submission_count': sub_count})
+                   'submission_count': sub_count,
+                   'participating_users': involved_users})
+
+
+@login_required
+@require_POST
+def get_hint(request, problem_id):
+    """Returns a JSON with the information of available Hints"""
+    problem = get_object_or_404(Problem, pk=problem_id)
+    num_subs = Submission.objects.filter(problem=problem, user=request.user).count()
+    list_hints = Hint.objects.filter(problem=problem).order_by('num_submit')
+    list_used_hints = UsedHint.objects.filter(user=request.user.pk).filter(hint_definition__problem=problem)
+    data = {'hint': '', 'msg': '', 'more_hints': False}
+    num_hint = list_used_hints.count()
+
+    # if there are not more hints available
+    if list_hints.count() == list_used_hints.count():
+        data['more_hints'] = False
+        data['msg'] = _('No hay más pistas disponibles para este ejercicio.')
+    else:
+        hint = list_hints[num_hint]
+
+        # if the number of wrong submission is less than the number of submissions
+        if num_subs >= hint.num_submit:
+            name = _('Pista {number}').format(number=list_used_hints.count()+1)
+            context = {'name': name, 'text': hint.get_text_html()}
+            html = render_to_string('hint.html', context)
+            data['hint'] = html
+            used_hint = UsedHint(user=request.user, hint_definition=hint)
+            used_hint.save()
+            if list_hints.count() == list_used_hints.count():
+                data['more_hints'] = False
+                data['msg'] = _('No hay más pistas disponibles para este ejercicio.')
+            else:
+                data['more_hints'] = True
+        else:
+            num = hint.num_submit - num_subs
+            data['more_hints'] = True
+            data['msg'] = _('Número de envíos que faltan para obtener la siguiente pista: {number}.').format(number=num)
+
+    return JsonResponse(data)

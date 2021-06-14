@@ -2,7 +2,34 @@
 {% load i18n %}
 {% load static %}
 {% block contenido %}
-<h1>{% translate 'Número de envíos' %}</h1>
+<p>
+<h1>{% translate 'Participación de usuarios por grupo' %}</h1>
+<table class="table">
+    <thead class="table-dark">
+    <tr>
+        <th scope="col">{% translate 'Grupo' %}</th>
+        <th scope="col">{% translate 'Usuarios totales' %}</th>
+        <th scope="col">{% translate 'Usuarios con al menos 1 envío (correcto)' %}</th>
+        <th scope="col">{% translate 'Envíos por usuario (media/desv. tip.)' %}</th>
+        <th scope="col">{% translate 'Envíos por usuario (cuartiles)' %}</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for group, data in participating_users.items %}
+    <tr>
+        <td><span class="remark">{{ group }}</span></td>
+        <td>{{ data.all }}</td>
+        <td>{{ data.participating }} ({{ data.acc }})</td>
+        <td>{{ data.avg|floatformat }} / {{ data.stdev|floatformat }}</td>
+        <td>{{ data.quantiles }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</p>
+
+<p>
+<h1>{% translate 'Número de envíos agrupados por resultado' %}</h1>
 <table class="table">
     <thead class="table-dark">
     <tr>
@@ -26,8 +53,11 @@
         <td>{{ submission_count.IE }}</td>
     </tr>
     </tbody>
-  </table>
+</table>
+</p>
 
+<p>
+<h1>{% translate 'Cantidad de envíos por día' %}</h1>
 <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.26.1/dist/apexcharts.min.js"
         integrity="sha256-L/wKrFoAMCGZhJntzxj0jCUITCWMdFzBtTGCUIvsilA=" crossorigin="anonymous"></script>
 <div id="chartAllSubmissions"></div>
@@ -83,4 +113,5 @@ var options = {
 var chart = new ApexCharts(document.querySelector("#chartAllSubmissions"), options);
 chart.render();
 </script>
+</p>
 {% endblock %}

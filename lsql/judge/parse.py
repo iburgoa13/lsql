@@ -7,6 +7,8 @@ Parse problem and set of collections from a ZIP file
 from zipfile import ZipFile
 import json
 
+from django.conf import settings
+
 from .exceptions import ZipFileParsingException
 
 
@@ -44,6 +46,41 @@ def extract_json(file, problem_type):
     return problem_json
 
 
+def get_language_from_json(problem_json):
+    """ Extracts the language code from problem JSON. If not defined, returns default language """
+    lang = problem_json.get('language', settings.LANGUAGE_CODE)
+    if lang not in map(lambda x: x[0], settings.LANGUAGES):
+        raise ZipFileParsingException(f"Unsupported language in {__JSON_NAME}: {lang}")
+    return lang
+
+
+def extract_hints_from_file(problem, zfile):
+    """ Extracts the hints from the file hints.md"""
+    hint_separation = "@@@new hint@@@"
+    hints = []
+    with zfile.open('hints.md', 'r') as hints_file:
+        hints_str = hints_file.read().decode(encoding='utf-8')
+
+    hints_list = hints_str.split(hint_separation)
+    for hint in hints_list:
+        hint_tuple_list = hint.lstrip().split(sep='\n', maxsplit=1)
+
+        try:
+            n_sub = int(hint_tuple_list[0])
+        except Exception as excp:
+            raise ZipFileParsingException('Invalid value for number of submissions, must be a number') from excp
+
+        if n_sub < 0:
+            raise ZipFileParsingException(f'Invalid value for number of submissions: {n_sub} in hints.md')
+
+        description = hint_tuple_list[1].strip()
+        if len(description) == 0:
+            raise ZipFileParsingException('Hint description cannot be empty in hints.md')
+
+        hints.append((n_sub, description))
+
+    problem.hints_info = hints
+
 def load_select_problem(problem, file) -> None:
     """
     Load the problem information from a ZIP file and updates the attributes of 'problem'
@@ -61,12 +98,12 @@ def load_select_problem(problem, file) -> None:
 
             state = 'Reading JSON file'
             problem.title_md = problem_json.get('title', '')
-            problem.min_stmt = int(problem_json['min_stmt'])
-            problem.max_stmt = int(problem_json['max_stmt'])
+            problem.language = get_language_from_json(problem_json)
+            problem.min_stmt = int(problem_json.get('min_stmt', '1'))
+            problem.max_stmt = int(problem_json.get('max_stmt', '1'))
             problem.position = int(problem_json['position'])
             problem.check_order = bool(problem_json.get('check_order'))  # None will be converted to False
-            if (not problem.title_md or problem.min_stmt <= 0 or problem.max_stmt <= 0 or
-                    problem.min_stmt > problem.max_stmt):
+            if not problem.title_md or problem.min_stmt != 1 or problem.max_stmt != 1:
                 raise ZipFileParsingException('Invalid value in JSON file: "title", "min_stmt" or "max_stmt"')
 
             state = 'Reading text.md file'
@@ -86,6 +123,10 @@ def load_select_problem(problem, file) -> None:
             state = 'Reading solution.sql file'
             with zfile.open('solution.sql', 'r') as solution_file:
                 problem.solution = solution_file.read().decode(encoding='utf-8')
+
+            if 'hints.md' in zfile.namelist():
+                state = 'Reading hints.md file'
+                extract_hints_from_file(problem, zfile)
     except ZipFileParsingException:
         raise
     except Exception as excp:
@@ -109,8 +150,9 @@ def load_dml_problem(problem, file):
 
             state = 'Reading JSON file'
             problem.title_md = problem_json.get('title', '')
-            problem.min_stmt = int(problem_json['min_stmt'])
-            problem.max_stmt = int(problem_json['max_stmt'])
+            problem.language = get_language_from_json(problem_json)
+            problem.min_stmt = int(problem_json.get('min_stmt', '1'))
+            problem.max_stmt = int(problem_json.get('max_stmt', '1'))
             problem.position = int(problem_json['position'])
             if (not problem.title_md or problem.min_stmt <= 0 or problem.max_stmt <= 0 or
                     problem.min_stmt > problem.max_stmt):
@@ -133,6 +175,10 @@ def load_dml_problem(problem, file):
             state = 'Reading solution.sql file'
             with zfile.open('solution.sql', 'r') as solution_file:
                 problem.solution = solution_file.read().decode(encoding='utf-8')
+
+            if 'hints.md' in zfile.namelist():
+                state = 'Reading hints.md file'
+                extract_hints_from_file(problem, zfile)
     except ZipFileParsingException:
         raise
     except Exception as excp:
@@ -156,7 +202,11 @@ def load_function_problem(problem, file):
 
             state = 'Reading JSON file'
             problem.title_md = problem_json.get('title', '')
+            problem.language = get_language_from_json(problem_json)
+            problem.min_stmt = int(problem_json.get('min_stmt', '1'))
+            problem.max_stmt = int(problem_json.get('max_stmt', '1'))
             problem.position = int(problem_json['position'])
+
             if not problem.title_md:
                 raise ZipFileParsingException('Invalid value in JSON file: "title"')
 
@@ -181,6 +231,10 @@ def load_function_problem(problem, file):
             state = 'Leyendo fichero tests.sql'
             with zfile.open('tests.sql', 'r') as tests_file:
                 problem.calls = tests_file.read().decode(encoding='utf-8')
+
+            if 'hints.md' in zfile.namelist():
+                state = 'Reading hints.md file'
+                extract_hints_from_file(problem, zfile)
     except ZipFileParsingException:
         raise
     except Exception as excp:
@@ -204,6 +258,9 @@ def load_proc_problem(problem, file):
 
             state = 'Reading JSON file'
             problem.title_md = problem_json.get('title', '')
+            problem.language = get_language_from_json(problem_json)
+            problem.min_stmt = int(problem_json.get('min_stmt', '1'))
+            problem.max_stmt = int(problem_json.get('max_stmt', '1'))
             problem.position = int(problem_json['position'])
             if not problem.title_md:
                 raise ZipFileParsingException('Invalid value in JSON file: "title"')
@@ -229,6 +286,10 @@ def load_proc_problem(problem, file):
             state = 'Leyendo fichero tests.sql'
             with zfile.open('tests.sql', 'r') as tests_file:
                 problem.proc_call = tests_file.read().decode(encoding='utf-8').strip()
+
+            if 'hints.md' in zfile.namelist():
+                state = 'Reading hints.md file'
+                extract_hints_from_file(problem, zfile)
     except ZipFileParsingException:
         raise
     except Exception as excp:
@@ -252,6 +313,9 @@ def load_trigger_problem(problem, file):
 
             state = 'Reading JSON file'
             problem.title_md = problem_json.get('title', '')
+            problem.language = get_language_from_json(problem_json)
+            problem.min_stmt = int(problem_json.get('min_stmt', '1'))
+            problem.max_stmt = int(problem_json.get('max_stmt', '1'))
             problem.position = int(problem_json['position'])
             if not problem.title_md:
                 raise ZipFileParsingException('Invalid values in JSON file: "title"')
@@ -277,6 +341,10 @@ def load_trigger_problem(problem, file):
             state = 'Leyendo fichero tests.sql'
             with zfile.open('tests.sql', 'r') as tests_file:
                 problem.tests = tests_file.read().decode(encoding='utf-8').strip()
+
+            if 'hints.md' in zfile.namelist():
+                state = 'Reading hints.md file'
+                extract_hints_from_file(problem, zfile)
     except ZipFileParsingException:
         raise
     except Exception as excp:
@@ -300,8 +368,9 @@ def load_discriminant_problem(problem, file):
 
             state = 'Reading JSON file'
             problem.title_md = problem_json.get('title', '')
-            problem.min_stmt = int(problem_json['min_stmt'])
-            problem.max_stmt = int(problem_json['max_stmt'])
+            problem.language = get_language_from_json(problem_json)
+            problem.min_stmt = int(problem_json.get('min_stmt', '1'))
+            problem.max_stmt = int(problem_json.get('max_stmt', '1'))
             problem.position = int(problem_json['position'])
             problem.check_order = bool(problem_json.get('check_order'))  # None will be converted to False
             if (not problem.title_md or problem.min_stmt <= 0 or problem.max_stmt <= 0 or
@@ -329,6 +398,10 @@ def load_discriminant_problem(problem, file):
             state = 'Reading correct_query.sql file'
             with zfile.open('correct_query.sql', 'r') as correct_file:
                 problem.correct_query = correct_file.read().decode(encoding='utf-8')
+
+            if 'hints.md' in zfile.namelist():
+                state = 'Reading hints.md file'
+                extract_hints_from_file(problem, zfile)
     except ZipFileParsingException:
         raise
     except Exception as excp:

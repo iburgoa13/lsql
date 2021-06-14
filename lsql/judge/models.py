@@ -18,6 +18,7 @@ from django.conf import settings
 from django.core.validators import MinLengthValidator
 from django.db.models import JSONField, Subquery
 from django.core.serializers.json import DjangoJSONEncoder
+from django.utils import translation
 
 from .feedback import compare_select_results, compare_db_results, compare_function_results, compare_discriminant_db
 from .oracle_driver import OracleExecutor
@@ -44,11 +45,11 @@ def load_many_problems(file, collection):
     try:
         with ZipFile(file) as zfile:
             for filename in zfile.infolist():
-                curr_file = zfile.open(filename)
-                problem = load_problem_from_file(curr_file)
-                problem.collection = collection
-                problem.author = collection.author
-                problems.append(problem)
+                with zfile.open(filename) as curr_file:
+                    problem = load_problem_from_file(curr_file)
+                    problem.collection = collection
+                    problem.author = collection.author
+                    problems.append(problem)
     except ZipFileParsingException as excp:
         raise ZipFileParsingException('{}: {}'.format(filename.filename, excp)) from excp
     except Exception as excp:
@@ -125,8 +126,8 @@ class Collection(models.Model):
 
     def languages(self):
         """Set with all the languages of the collection"""
-        return list(self.problems().order_by('language').distinct('language') \
-            .values_list('language', flat=True))
+        return list(self.problems().order_by('language').distinct('language').values_list('language', flat=True))
+
 
 class Problem(models.Model):
     """Base class for problems, with common attributes and methods"""
@@ -235,7 +236,7 @@ class SelectProblem(Problem):
     expected_result = JSONField(encoder=DjangoJSONEncoder, default=None, blank=True, null=True)
 
     def clean(self):
-        """Executes the problem and stores the expected result"""
+        """ Executes the problem and stores the expected result """
         try:
             if self.zipfile:
                 # Replaces the fields with the information from the file
@@ -486,10 +487,19 @@ class Submission(models.Model):
         return f"{self.pk} - {self.user.email} - {self.veredict_code}"
 
 
+def default_json_lang():
+    """ Default values for name and description attributes in AchievementDefinition """
+    return {settings.LANGUAGE_CODE: ""}
+
+
 class AchievementDefinition(models.Model):
     """Abstract class for Achievements"""
-    name = models.TextField(max_length=5000, validators=[MinLengthValidator(1)], blank=True)
-    description = models.TextField(max_length=5000, validators=[MinLengthValidator(1)], blank=True)
+    name = JSONField(encoder=DjangoJSONEncoder,
+                     default=default_json_lang,
+                     blank=True, null=True)
+    description = JSONField(encoder=DjangoJSONEncoder,
+                            default=default_json_lang,
+                            blank=True, null=True)
 
     # To query Problem to obtain subclass objects with '.select_subclasses()'
     objects = InheritanceManager()
@@ -512,7 +522,19 @@ class AchievementDefinition(models.Model):
 
     def __str__(self):
         """String for show the achievement name"""
-        return f"{self.name}"
+        return self.get_name()
+
+    def get_name(self):
+        """Returns the name in the current language"""
+        if translation.get_language() in self.name:
+            return f"{self.name[translation.get_language()]}"
+        return f"{self.name[settings.LANGUAGE_CODE]}"
+
+    def get_description(self):
+        """Returns the description in the current language"""
+        if translation.get_language() in self.description:
+            return f"{self.description[translation.get_language()]}"
+        return f"{self.description[settings.LANGUAGE_CODE]}"
 
 
 class ObtainedAchievement(models.Model):
@@ -527,7 +549,7 @@ class NumSolvedAchievementDefinition(AchievementDefinition, models.Model):
     num_problems = models.PositiveIntegerField(default=1, null=False)
 
     def check_and_save(self, user):
-        """Check if an user is deserving for get an achievement, if it is, save that"""
+        """Return if an user is deserving for get an achievement, if it is, save that"""
         if not self.check_user(user):
             corrects = Submission.objects.filter(veredict_code=VeredictCode.AC, user=user).distinct("problem").count()
             if corrects >= self.num_problems:
@@ -541,6 +563,8 @@ class NumSolvedAchievementDefinition(AchievementDefinition, models.Model):
                                                       obtained_date=order_problem_creation_date[self.num_problems-1],
                                                       achievement_definition=self)
                 new_achievement.save()
+                return True
+        return False
 
 
 class PodiumAchievementDefinition(AchievementDefinition, models.Model):
@@ -549,7 +573,7 @@ class PodiumAchievementDefinition(AchievementDefinition, models.Model):
     position = models.PositiveIntegerField(default=3, null=False)
 
     def check_and_save(self, user):
-        """Check if an user is deserving for get an achievement, if it is, save that"""
+        """Return if an user is deserving for get an achievement, if it is, save that"""
         if not self.check_user(user):
             # First submission of each Problem that user have VeredictCode.AC. Ordered by 'creation_date'
             # Subquery return a list of creation_date of the problems that user have VeredictCode.AC
@@ -561,13 +585,15 @@ class PodiumAchievementDefinition(AchievementDefinition, models.Model):
             if order_problem_creation_date.count() >= self.num_problems:
                 for sub in order_problem_creation_date:
                     prob = Problem.objects.get(pk=sub.problem.pk)
-                    if prob.solved_position(user) <= self.position:
+                    user_pos = prob.solved_position(user)
+                    if user_pos is not None and user_pos <= self.position:
                         total = total + 1
                         if total >= self.num_problems:
                             new_achievement = ObtainedAchievement(user=user, obtained_date=sub.creation_date,
                                                                   achievement_definition=self)
                             new_achievement.save()
-                            return
+                            return True
+        return False
 
 
 class NumSolvedCollectionAchievementDefinition(AchievementDefinition, models.Model):
@@ -576,7 +602,7 @@ class NumSolvedCollectionAchievementDefinition(AchievementDefinition, models.Mod
     collection = models.ForeignKey(Collection, on_delete=models.CASCADE)
 
     def check_and_save(self, user):
-        """Check if an user is deserving for get an achievement, if it is, save that"""
+        """Return if an user is deserving for get an achievement, if it is, save that"""
         if not self.check_user(user):
             corrects = Submission.objects.filter(veredict_code=VeredictCode.AC, user=user,
                                                  problem__collection=self.collection).distinct("problem").count()
@@ -592,6 +618,8 @@ class NumSolvedCollectionAchievementDefinition(AchievementDefinition, models.Mod
                                                       obtained_date=order_problem_creation_date[self.num_problems - 1],
                                                       achievement_definition=self)
                 new_achievement.save()
+                return True
+        return False
 
 
 class NumSolvedTypeAchievementDefinition(AchievementDefinition, models.Model):
@@ -605,7 +633,7 @@ class NumSolvedTypeAchievementDefinition(AchievementDefinition, models.Model):
     )
 
     def check_and_save(self, user):
-        """Check if an user is deserving for get an achievement, if it is, save that"""
+        """Return if an user is deserving for get an achievement, if it is, save that"""
         if not self.check_user(user):
             count = 0
             # First submission of each Problem that user have VeredictCode.AC. Ordered by 'creation_date'
@@ -623,7 +651,8 @@ class NumSolvedTypeAchievementDefinition(AchievementDefinition, models.Model):
                                                               obtained_date=sub.creation_date,
                                                               achievement_definition=self)
                         new_achievement.save()
-                        return
+                        return True
+        return False
 
 
 class NumSubmissionsProblemsAchievementDefinition(AchievementDefinition, models.Model):
@@ -632,7 +661,7 @@ class NumSubmissionsProblemsAchievementDefinition(AchievementDefinition, models.
     num_problems = models.PositiveIntegerField(default=1, null=False)
 
     def check_and_save(self, user):
-        """Check if an user is deserving for get an achievement, if it is, save that"""
+        """Return if an user is deserving for get an achievement, if it is, save that"""
         if not self.check_user(user):
             total_submissions = Submission.objects.filter(user=user).count()
             if total_submissions >= self.num_submissions:
@@ -647,3 +676,24 @@ class NumSubmissionsProblemsAchievementDefinition(AchievementDefinition, models.
                                                    obtained_date=order_problem_creation_date[self.num_problems-1],
                                                    achievement_definition=self)
                     new_achi.save()
+                    return True
+        return False
+
+
+class Hint(models.Model):
+    """Hints of a problem"""
+    text_md = models.TextField(max_length=5000, validators=[MinLengthValidator(1)], blank=True)
+    problem = models.ForeignKey(Problem, on_delete=models.CASCADE)
+    num_submit = models.PositiveIntegerField(default=0, null=False)
+
+    def get_text_html(self):
+        """Converts a markdown string into HTML"""
+        text_html = markdown_to_html(self.text_md, remove_initial_p=True)
+        return text_html
+
+
+class UsedHint(models.Model):
+    """Hints used by user"""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    request_date = models.DateTimeField(auto_now_add=True)
+    hint_definition = models.ForeignKey(Hint, on_delete=models.CASCADE)
